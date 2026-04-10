@@ -6,9 +6,9 @@
 **/build_sanity/
 
 # Local tooling
-/.codex
-/src/.codex
-**/.codex
+/.codex/
+/src/.codex/
+**/.codex/
 
 # Archives and generated bundles
 *.zip

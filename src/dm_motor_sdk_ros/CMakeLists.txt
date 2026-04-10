@@ -13,21 +13,9 @@ find_package(std_msgs REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 
-set(DM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
-set(DM_SDK_DIR "${DM_THIRD_PARTY_DIR}/dm_sdk/linux")
-set(DM_RUNTIME_DIR "${DM_THIRD_PARTY_DIR}/runtime/linux")
-set(DM_SDK_SO "${DM_SDK_DIR}/libdm_device.so")
-set(DM_RUNTIME_LIBSTDCXX "${DM_RUNTIME_DIR}/libstdc++.so.6")
-set(DM_RUNTIME_LIBGCC "${DM_RUNTIME_DIR}/libgcc_s.so.1")
-
+set(DM_SDK_SO "${CMAKE_CURRENT_SOURCE_DIR}/third_party/dm_sdk/linux/libdm_device.so")
 if(NOT EXISTS ${DM_SDK_SO})
   message(FATAL_ERROR "libdm_device.so not found at ${DM_SDK_SO}")
-endif()
-if(NOT EXISTS ${DM_RUNTIME_LIBSTDCXX})
-  message(FATAL_ERROR "libstdc++.so.6 not found at ${DM_RUNTIME_LIBSTDCXX}")
-endif()
-if(NOT EXISTS ${DM_RUNTIME_LIBGCC})
-  message(FATAL_ERROR "libgcc_s.so.1 not found at ${DM_RUNTIME_LIBGCC}")
 endif()
 
 include_directories(
@@ -39,17 +27,11 @@ add_library(dm_sdk_can_bsp
   src/can_bsp_sdk.cpp
 )
 target_link_libraries(dm_sdk_can_bsp
-  ${DM_RUNTIME_LIBSTDCXX}
-  ${DM_RUNTIME_LIBGCC}
   ${DM_SDK_SO}
   ${LIBUSB_LIBRARIES}
   pthread
 )
 target_include_directories(dm_sdk_can_bsp PRIVATE ${LIBUSB_INCLUDE_DIRS})
-target_link_options(dm_sdk_can_bsp INTERFACE
-  "-Wl,-rpath-link,${DM_SDK_DIR}"
-  "-Wl,-rpath-link,${DM_RUNTIME_DIR}"
-)
 
 add_library(dm_motor_protocol
   src/dm_motor_drv.c
@@ -111,9 +93,8 @@ target_link_libraries(dm_motor_sdk_stress_test
 )
 
 set_target_properties(dm_sdk_can_bsp dm_motor_minimal_node dm_motor_robot_driver_node dm_motor_robot_stress_node dm_motor_sdk_example dm_motor_sdk_stress_test PROPERTIES
-  BUILD_RPATH "${DM_SDK_DIR};${DM_RUNTIME_DIR}"
-  INSTALL_RPATH "\$ORIGIN;\$ORIGIN/.."
-  INSTALL_RPATH_USE_LINK_PATH FALSE
+  BUILD_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/dm_sdk/linux"
+  INSTALL_RPATH "\$ORIGIN"
 )
 
 install(TARGETS
@@ -135,13 +116,6 @@ install(DIRECTORY include/
 
 install(FILES
   third_party/dm_sdk/linux/libdm_device.so
-  DESTINATION lib
-)
-
-install(FILES
-  third_party/runtime/linux/libstdc++.so.6
-  third_party/runtime/linux/libstdc++.so.6.0.35
-  third_party/runtime/linux/libgcc_s.so.1
   DESTINATION lib
 )
 
