@@ -108,6 +108,20 @@ ament_target_dependencies(teach_pendant_follow_node
   std_msgs
 )
 
+add_executable(follow_target_node src/follow_target_node.cpp)
+target_link_libraries(follow_target_node arm2_algorithms)
+ament_target_dependencies(follow_target_node
+  rclcpp
+  geometry_msgs
+  pinocchio
+  robot_msgs
+  std_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  ament_index_cpp
+)
+
 # 5. 分类安装 (核心修复)
 # 将库安装到标准的 lib/ 目录下
 install(TARGETS arm2_algorithms
@@ -126,6 +140,7 @@ install(TARGETS
   trajectory_planner_node
   inverse_dynamics_target_test_node
   teach_pendant_follow_node
+  follow_target_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

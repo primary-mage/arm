@@ -22,7 +22,7 @@
       #2. 纯重力补偿模式 (GRAVITY_COMP): 极低 PD,主要靠动力学模型抵消重力,实现“透明”手感或零力示教
       gravity_comp:
         kd: [1.0, 2.5, 1.5, 0.2, 0.02]
-        kp: [2.0, 8.5, 3.0, 1.2, 0.1]
+        kp: [2.0, 6.5, 4.0, 1.2, 0.1]
       # 1. 待机模式 (IDLE): 低增益，防止电机高频振动发热，允许手动推过
       idle:
         kd: [0.5, 0.5, 0.5, 0.2, 0.1]
@@ -33,6 +33,9 @@
         kp: [5.0, 20.0, 15.0, 8.5, 0.6]
       #3. 运动模式 (MOVING): 标准增益，兼顾响应速度和稳定性，用于瞭望、俯瞰等空载移动
       moving:
+        kd: [1.0, 4.0, 2.5, 0.5, 0.1]
+        kp: [3.5, 15.0, 10.0, 3.0, 0.5]
+      tracking:
         kd: [1.0, 4.0, 1.5, 0.1, 0.1]
         kp: [3.5, 15.0, 8.0, 1.2, 0.5]
       teach_pendant:
@@ -91,6 +94,35 @@
       target_qos_depth: 10
       log_input: false
       joint_names: [joint1, joint2, joint3, joint4, joint5]
+      angle_window_lower: [-3.14159265, -0.5, -3.0, -2.0, -3.14159265]
+      angle_window_upper: [3.14159265, 3.5, 0.15, 1.57, 3.14159265]
+    follow_target:
+      state_topic: /arm2/_lowState/joint
+      target_topic: /joint_target_state
+      ready_topic: /robot_driver/ready
+      pick_service: get_pick_pos
+      object_name: box
+      mode_service: set_controller_mode
+      mode_name: tracking
+      request_mode_on_startup: true
+      acquisition_hz: 10.0
+      publish_hz: 50.0
+      target_qos_depth: 10
+      pick_wait_service_sec: 1.0
+      pick_response_timeout_sec: 0.5
+      transform_timeout_sec: 0.5
+      target_stale_timeout_sec: 0.35
+      radial_offset: -0.08
+      height_offset: 0.20
+      follow_tool_pitch: -1.57
+      follow_roll: 0.0
+      camera_pitch_blend: 1.0
+      camera_pitch_lower: -2.0
+      camera_pitch_upper: 1.57
+      position_filter_alpha: 0.25
+      max_abs_velocity: 1.5
+      max_abs_acceleration: 8.0
+      log_target: false
       angle_window_lower: [-3.14159265, -0.5, -3.0, -2.0, -3.14159265]
       angle_window_upper: [3.14159265, 3.5, 0.15, 1.57, 3.14159265]
     teach_drag_record:

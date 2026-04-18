@@ -334,6 +334,7 @@ private:
             "idle",
             "gravity_comp",
             "moving",
+            "tracking",
             "loaded",
             "teach_pendant",
             "teach_drag"};

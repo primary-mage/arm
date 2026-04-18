@@ -2,6 +2,7 @@
 #include <chrono>
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <Eigen/Dense>
@@ -56,6 +57,7 @@ public:
         double l4 = this->declare_parameter("robot_geometry.l4", 0.046);
 
         load_presets(); // 读取预设位姿
+        load_camera_extrinsics();
 
         max_v_ = this->declare_parameter("trajectory_planner.max_velocity", 1.0);
         max_a_ = this->declare_parameter("trajectory_planner.max_acceleration", 2.0);
@@ -207,6 +209,39 @@ public:
         return false;
     }
 
+    bool approach_target_action(const geometry_msgs::msg::Pose &target_world_pose)
+    {
+        Eigen::VectorXd q_ik(5);
+        Eigen::Vector3d target_p(
+            target_world_pose.position.x,
+            target_world_pose.position.y,
+            target_world_pose.position.z);
+
+        constexpr double kApproachROffset = -0.2;
+        constexpr double kApproachZOffset = 0.4;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Approach target with offsets: dr=%.3f dz=%.3f",
+            kApproachROffset,
+            kApproachZOffset);
+
+        if (kin_engine_->solveIK(
+                target_p,
+                q_ik,
+                kApproachROffset,
+                kApproachZOffset,
+                camera_pos_link4_))
+        {
+            ik_success_ = true;
+            return send_move_goal({q_ik});
+        }
+
+        ik_success_ = false;
+        RCLCPP_ERROR(this->get_logger(), "IK failed for approach target action with camera-aware solveIK.");
+        return false;
+    }
+
     bool grasp_action(const geometry_msgs::msg::Pose &target_world_pose)
     {
         Eigen::VectorXd q_ik(5);
@@ -216,7 +251,7 @@ public:
         Eigen::Vector3d target_p(
             target_world_pose.position.x,
             target_world_pose.position.y,
-            target_world_pose.position.z + 0.2);
+            target_world_pose.position.z + 0.25);
 
         // 2. 调用 solveIK (匹配第 34 行定义的 3 参数版本)
         if (kin_engine_->solveIK(target_p, target_pitch, q_ik))
@@ -295,6 +330,34 @@ private:
 
             RCLCPP_INFO(this->get_logger(), "Loaded preset '%s' (converted to radians)", name.c_str());
         }
+    }
+
+    void load_camera_extrinsics()
+    {
+        const auto parent_frame =
+            this->declare_parameter("camera_extrinsics.parent_frame", std::string("Link_4"));
+        const auto child_frame =
+            this->declare_parameter("camera_extrinsics.child_frame", std::string("camera_link"));
+        auto pos =
+            this->declare_parameter("camera_extrinsics.pos", std::vector<double>{0.0, -0.07, 0.0});
+        if (pos.size() != 3U)
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "camera_extrinsics.pos size=%zu, expected 3. Falling back to [0.0, -0.07, 0.0].",
+                pos.size());
+            pos = {0.0, -0.07, 0.0};
+        }
+
+        camera_pos_link4_ = Eigen::Vector3d(pos[0], pos[1], pos[2]);
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Loaded camera extrinsics %s -> %s, pos=[%.3f, %.3f, %.3f]",
+            parent_frame.c_str(),
+            child_frame.c_str(),
+            camera_pos_link4_.x(),
+            camera_pos_link4_.y(),
+            camera_pos_link4_.z());
     }
     // 发送关节空间目标
     bool wait_for_action_completion(std::chrono::seconds timeout = std::chrono::seconds(30))
@@ -704,7 +767,8 @@ private:
             std::cout << "5: 执行 Step 5 (移动到预设 LOAD 点)" << std::endl;
             std::cout << "6: 执行 Step 6 (感知目标并执行 IK 抓取)" << std::endl;
             std::cout << "7: 执行 Step 7 (获取当前识别目标位姿)" << std::endl;
-            std::cout << "8: 执行 Step 8 (感知目标并动态 LOOKAT)" << std::endl;
+            std::cout << "8: 执行 Step 8 (动态 LOOKAT 后直接抓取)" << std::endl;
+            std::cout << "9: 执行 Step 9 (感知目标并执行 IK 抓取)" << std::endl;
             std::cout << "0: 退出程序" << std::endl;
             std::cout << "请输入指令数字: " << std::flush;
 
@@ -920,7 +984,7 @@ private:
 
             case 8:
             {
-                RCLCPP_INFO(this->get_logger(), ">>> Step 8: Dynamic Look At...");
+                RCLCPP_INFO(this->get_logger(), ">>> Step 8: Dynamic Look At + Grasp...");
                 if (!request_mode_switch("moving"))
                 {
                     RCLCPP_ERROR(this->get_logger(), "Step 8 aborted because controller failed to enter moving mode.");
@@ -928,7 +992,7 @@ private:
                 }
 
                 geometry_msgs::msg::Pose target_pose;
-                bool action_started = false;
+                bool look_at_started = false;
                 if (call_pick_service_sync("box", &target_pose))
                 {
                     RCLCPP_INFO(
@@ -937,30 +1001,44 @@ private:
                         target_pose.position.x,
                         target_pose.position.y,
                         target_pose.position.z);
-                    action_started = look_at_action(target_pose);
+                    look_at_started = look_at_action(target_pose);
                 }
                 else
                 {
                     RCLCPP_ERROR(this->get_logger(), "Step 8 aborted because no valid target pose was received.");
                 }
 
-                if (action_started)
+                if (look_at_started)
                 {
                     if (!wait_for_action_completion())
                     {
-                        RCLCPP_ERROR(this->get_logger(), "Step 8 motion did not finish successfully.");
+                        RCLCPP_ERROR(this->get_logger(), "Step 8 look_at motion did not finish successfully.");
+                        RCLCPP_INFO(this->get_logger(), "Step 8 完成。");
+                        break;
+                    }
+
+                    if (grasp_action(target_pose))
+                    {
+                        if (!wait_for_action_completion())
+                        {
+                            RCLCPP_ERROR(this->get_logger(), "Step 8 grasp motion did not finish successfully.");
+                        }
+                    }
+                    else
+                    {
+                        RCLCPP_ERROR(this->get_logger(), "Step 8 grasp skipped because IK or move goal failed.");
                     }
                 }
                 RCLCPP_INFO(this->get_logger(), "Step 8 完成。");
                 break;
             }
 
-               case 9:
+            case 9:
             {
-                RCLCPP_INFO(this->get_logger(), ">>> Step 8: Dynamic Look At...");
+                RCLCPP_INFO(this->get_logger(), ">>> Step 9: IK Grasping...");
                 if (!request_mode_switch("moving"))
                 {
-                    RCLCPP_ERROR(this->get_logger(), "Step 8 aborted because controller failed to enter moving mode.");
+                    RCLCPP_ERROR(this->get_logger(), "Step 9 aborted because controller failed to enter moving mode.");
                     break;
                 }
 
@@ -970,7 +1048,7 @@ private:
                 {
                     RCLCPP_INFO(
                         this->get_logger(),
-                        "Target Pose for Look At: x=%.3f y=%.3f  z=%.3f",
+                        "Target Pose for Grasp: x=%.3f y=%.3f  z=%.3f",
                         target_pose.position.x,
                         target_pose.position.y,
                         target_pose.position.z);
@@ -978,17 +1056,17 @@ private:
                 }
                 else
                 {
-                    RCLCPP_ERROR(this->get_logger(), "Step 8 aborted because no valid target pose was received.");
+                    RCLCPP_ERROR(this->get_logger(), "Step 9 aborted because no valid target pose was received.");
                 }
 
                 if (action_started)
                 {
                     if (!wait_for_action_completion())
                     {
-                        RCLCPP_ERROR(this->get_logger(), "Step 8 motion did not finish successfully.");
+                        RCLCPP_ERROR(this->get_logger(), "Step 9 motion did not finish successfully.");
                     }
                 }
-                RCLCPP_INFO(this->get_logger(), "Step 8 完成。");
+                RCLCPP_INFO(this->get_logger(), "Step 9 完成。");
                 break;
             }
 
@@ -1030,6 +1108,7 @@ private:
     std::mutex action_result_mutex_;
 
     std::map<std::string, Eigen::VectorXd> presets_; // 预设位姿
+    Eigen::Vector3d camera_pos_link4_{0.0, -0.07, 0.0};
     std::unique_ptr<arm2_task::KinematicsEngine> kin_engine_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

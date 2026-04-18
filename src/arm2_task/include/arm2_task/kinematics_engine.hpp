@@ -55,6 +55,19 @@ public:
              double r_offset, 
              double z_offset);
     /**
+     * @brief 逆运动学：偏置后的目标点视为相机坐标，相机朝向原始目标点
+     * @param target_p_world 原始目标在基座坐标系下的位置
+     * @param q_out [out] 输出 5 自由度关节角
+     * @param r_offset 相机目标点相对原始目标点的径向偏移
+     * @param z_offset 相机目标点相对原始目标点的高度偏移
+     * @param camera_pos_link4 相机在 Link_4 坐标系下的位置外参
+     */
+    bool solveIK(const Eigen::Vector3d& target_p_world,
+                 Eigen::VectorXd& q_out,
+                 double r_offset,
+                 double z_offset,
+                 const Eigen::Vector3d& camera_pos_link4);
+    /**
      * @brief 坐标系转换：将 Link_4 坐标系下的相对偏移转换为基座坐标系下的绝对位置
      * 常用于处理视觉检测到的物体相对位置
      */
