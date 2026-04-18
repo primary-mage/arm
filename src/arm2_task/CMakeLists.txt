@@ -108,6 +108,20 @@ ament_target_dependencies(teach_pendant_follow_node
   std_msgs
 )
 
+add_executable(teach_drag_record_node src/teach_drag_record_node.cpp)
+ament_target_dependencies(teach_drag_record_node
+  rclcpp
+  robot_msgs
+  std_msgs
+)
+
+add_executable(teach_drag_playback_node src/teach_drag_playback_node.cpp)
+ament_target_dependencies(teach_drag_playback_node
+  rclcpp
+  robot_msgs
+  std_msgs
+)
+
 add_executable(follow_target_node src/follow_target_node.cpp)
 target_link_libraries(follow_target_node arm2_algorithms)
 ament_target_dependencies(follow_target_node
@@ -140,6 +154,8 @@ install(TARGETS
   trajectory_planner_node
   inverse_dynamics_target_test_node
   teach_pendant_follow_node
+  teach_drag_record_node
+  teach_drag_playback_node
   follow_target_node
   DESTINATION lib/${PROJECT_NAME}
 )

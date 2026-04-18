@@ -126,7 +126,7 @@
       angle_window_lower: [-3.14159265, -0.5, -3.0, -2.0, -3.14159265]
       angle_window_upper: [3.14159265, 3.5, 0.15, 1.57, 3.14159265]
     teach_drag_record:
-      output_file: recordings/teach_drag_trajectory.yaml
+      output_file: recordings/teach_drag_trajectory.csv
       state_topic: /arm2/_lowState/joint
       ready_topic: /robot_driver/ready
       autosave_period_sec: 1.0
@@ -135,6 +135,20 @@
       require_ready: true
       overwrite_output: true
       joint_names: [joint1, joint2, joint3, joint4, joint5]
+    teach_drag_playback:
+      input_file: recordings/teach_drag_trajectory.csv
+      target_topic: /joint_target_state
+      ready_topic: /robot_driver/ready
+      mode_service: set_controller_mode
+      mode_name: moving
+      request_mode_on_startup: true
+      wait_for_ready: true
+      publish_rate_hz: 100.0
+      target_qos_depth: 10
+      hold_last_sample: true
+      loop: false
+      playback_speed: 1.0
+      log_progress: false
     inverse_dynamics:
       state_topic: /arm2/_lowState/joint
       target_topic: /joint_target_state
