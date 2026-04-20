@@ -10,6 +10,8 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(robot_msgs REQUIRED) 
 find_package(std_msgs REQUIRED)
@@ -122,6 +124,16 @@ ament_target_dependencies(teach_drag_playback_node
   std_msgs
 )
 
+add_executable(imitation_dataset_recorder_node src/imitation_dataset_recorder_node.cpp)
+ament_target_dependencies(imitation_dataset_recorder_node
+  rclcpp
+  sensor_msgs
+  robot_msgs
+  std_msgs
+  cv_bridge
+)
+target_link_libraries(imitation_dataset_recorder_node ${OpenCV_LIBS})
+
 add_executable(follow_target_node src/follow_target_node.cpp)
 target_link_libraries(follow_target_node arm2_algorithms)
 ament_target_dependencies(follow_target_node
@@ -156,6 +168,7 @@ install(TARGETS
   teach_pendant_follow_node
   teach_drag_record_node
   teach_drag_playback_node
+  imitation_dataset_recorder_node
   follow_target_node
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -167,6 +180,6 @@ install(DIRECTORY config launch urdf meshes
 
 # 6. 导出接口 (确保其他包能找到这个库)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rclcpp geometry_msgs sensor_msgs pinocchio robot_msgs std_msgs ament_index_cpp)
+ament_export_dependencies(rclcpp geometry_msgs sensor_msgs cv_bridge pinocchio robot_msgs std_msgs ament_index_cpp)
 
 ament_package()

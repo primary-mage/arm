@@ -1,0 +1,27 @@
+seed: 42
+device: auto
+
+dataset:
+  root_dir: /home/primarymage/WorkFile/arm/dataset
+  train_split: 0.8
+  target_mode: q
+  state_features: [q, dq]
+  image_size: [224, 224]
+  action_time_offset_sec: 0.0
+  max_episodes: 0
+
+training:
+  batch_size: 16
+  num_workers: 0
+  epochs: 20
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  log_interval: 10
+  output_dir: runs/arm_bc
+
+model:
+  image_channels: 3
+  image_feature_dim: 128
+  state_dim: 10
+  hidden_dim: 256
+  action_dim: 5

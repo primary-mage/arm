@@ -33,8 +33,8 @@
         kp: [5.0, 20.0, 15.0, 8.5, 0.6]
       #3. 运动模式 (MOVING): 标准增益，兼顾响应速度和稳定性，用于瞭望、俯瞰等空载移动
       moving:
-        kd: [1.0, 4.0, 2.5, 0.5, 0.1]
-        kp: [3.5, 15.0, 10.0, 3.0, 0.5]
+        kd: [1.0, 4.0, 2.5, 1.5, 0.1]
+        kp: [5.5, 20.0, 15.0, 5.0, 0.5]
       tracking:
         kd: [1.0, 4.0, 1.5, 0.1, 0.1]
         kp: [3.5, 15.0, 8.0, 1.2, 0.5]
@@ -149,6 +149,18 @@
       loop: false
       playback_speed: 1.0
       log_progress: false
+    imitation_dataset:
+      dataset_root: dataset
+      task_name: unnamed_task
+      image_topic: /camera/color/image_raw
+      state_topic: /arm2/_lowState/joint
+      action_topic: /joint_target_state
+      event_topic: /episode_event
+      auto_start: false
+      output_fps: 30.0
+      write_mp4: true
+      mp4_codec: mp4v
+      overwrite_episode: false
     inverse_dynamics:
       state_topic: /arm2/_lowState/joint
       target_topic: /joint_target_state

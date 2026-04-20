@@ -1,0 +1,11 @@
+/**:
+  ros__parameters:
+    checkpoint_path: ""
+    image_topic: /camera/color/image_raw
+    state_topic: /arm2/_lowState/joint
+    target_topic: /joint_target_state
+    publish_rate_hz: 20.0
+    image_size: [224, 224]
+    state_features: [q, dq]
+    frame_id: ""
+    log_predictions: false

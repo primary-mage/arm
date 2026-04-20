@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    video_device: /dev/video6
+    target_camera_name: Intel(R) RealSense(TM)
+    auto_select_device: true
+    preferred_pixel_formats: [YUYV, MJPG, RGB3, BGR3]
+    image_topic: /camera/color/image_raw
+    camera_info_topic: /camera/color/camera_info
+    frame_id: camera_color_optical_frame
+    width: 640
+    height: 480
+    fps: 30.0
+    fourcc: YUYV
+    convert_to_rgb: true
