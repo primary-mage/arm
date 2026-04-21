@@ -1,0 +1,6 @@
+{
+  "checkpoint": "/root/arm/runs/arm_bc_full/best.pt",
+  "num_samples": 5143,
+  "mean_l1_loss": 0.034331617441059864,
+  "mean_mse_loss": 0.07227218270871513
+}
