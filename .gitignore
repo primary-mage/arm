@@ -12,10 +12,15 @@
 
 # Archives and generated bundles
 *.zip
+*.pt
 
 # Python
 __pycache__/
 *.pyc
+
+# Local datasets and training outputs
+/dataset/
+/runs/
 
 # Editors / OS
 .DS_Store

@@ -52,6 +52,17 @@ class SampleIndex:
     action_index: int
 
 
+@dataclass
+class QualityFilterConfig:
+    enabled: bool = False
+    min_frames: int = 0
+    min_states: int = 0
+    min_actions: int = 0
+    min_duration_sec: float = 0.0
+    min_action_total_motion: float = 0.0
+    allowed_close_reasons: tuple[str, ...] = tuple()
+
+
 class EpisodeAlignment:
     def __init__(self, episode_dir: Path, action_time_offset_sec: float) -> None:
         self.episode_dir = episode_dir
@@ -75,9 +86,26 @@ class EpisodeAlignment:
         self.state_times = [float(row["t"]) for row in self.state_rows]
         self.action_times = [float(row["t"]) for row in self.action_rows]
         self.action_time_offset_sec = action_time_offset_sec
+        self.duration_sec = self._compute_meta_duration_sec()
+        self.action_total_motion = self._compute_action_total_motion()
 
         self.samples: list[SampleIndex] = []
         self._build_sample_index()
+
+    def _compute_meta_duration_sec(self) -> float:
+        start_time = float(self.meta.get("start_time_sec", 0.0))
+        end_time = float(self.meta.get("end_time_sec", 0.0))
+        return max(0.0, end_time - start_time)
+
+    def _compute_action_total_motion(self) -> float:
+        total_motion = 0.0
+        previous_q: np.ndarray | None = None
+        for row in self.action_rows:
+            current_q = _extract_vector(row, "q")
+            if previous_q is not None:
+                total_motion += float(np.linalg.norm(current_q - previous_q))
+            previous_q = current_q
+        return total_motion
 
     def _build_sample_index(self) -> None:
         if not self.frame_times or not self.state_times or not self.action_times:
@@ -140,6 +168,7 @@ class ArmEpisodeDataset(Dataset):
         target_mode: str = "q",
         action_time_offset_sec: float = 0.0,
         max_episodes: int = 0,
+        quality_filter: QualityFilterConfig | None = None,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.split = split
@@ -149,6 +178,7 @@ class ArmEpisodeDataset(Dataset):
         self.target_mode = target_mode
         self.action_time_offset_sec = action_time_offset_sec
         self.max_episodes = max_episodes
+        self.quality_filter = quality_filter or QualityFilterConfig()
 
         self.alignments: list[EpisodeAlignment] = []
         self.sample_index: list[SampleIndex] = []
@@ -179,12 +209,44 @@ class ArmEpisodeDataset(Dataset):
 
         for episode_dir in selected_dirs:
             alignment = EpisodeAlignment(episode_dir, self.action_time_offset_sec)
-            if alignment.samples:
-                self.alignments.append(alignment)
-                self.sample_index.extend(alignment.samples)
+            if not alignment.samples:
+                continue
+
+            filter_reasons = self._quality_filter_reasons(alignment)
+            if filter_reasons:
+                print(
+                    f"[dataset:{self.split}] skip {episode_dir.name} because {', '.join(filter_reasons)}",
+                    flush=True,
+                )
+                continue
+
+            self.alignments.append(alignment)
+            self.sample_index.extend(alignment.samples)
 
         if not self.sample_index:
             raise RuntimeError(f"No aligned samples were built for split={self.split}")
+
+    def _quality_filter_reasons(self, alignment: EpisodeAlignment) -> list[str]:
+        cfg = self.quality_filter
+        if not cfg.enabled:
+            return []
+
+        reasons: list[str] = []
+        if cfg.allowed_close_reasons:
+            close_reason = str(alignment.meta.get("close_reason", ""))
+            if close_reason not in cfg.allowed_close_reasons:
+                reasons.append(f"close_reason={close_reason}")
+        if len(alignment.frame_rows) < cfg.min_frames:
+            reasons.append(f"frames<{cfg.min_frames}")
+        if len(alignment.state_rows) < cfg.min_states:
+            reasons.append(f"states<{cfg.min_states}")
+        if len(alignment.action_rows) < cfg.min_actions:
+            reasons.append(f"actions<{cfg.min_actions}")
+        if alignment.duration_sec < cfg.min_duration_sec:
+            reasons.append(f"duration<{cfg.min_duration_sec}")
+        if alignment.action_total_motion < cfg.min_action_total_motion:
+            reasons.append(f"action_motion<{cfg.min_action_total_motion}")
+        return reasons
 
     def __len__(self) -> int:
         return len(self.sample_index)
@@ -259,6 +321,17 @@ def build_dataloaders(config: dict[str, Any]):
     image_size = tuple(dataset_cfg["image_size"])
     state_features = tuple(dataset_cfg["state_features"])
 
+    quality_cfg = dataset_cfg.get("quality_filter", {})
+    quality_filter = QualityFilterConfig(
+        enabled=bool(quality_cfg.get("enabled", False)),
+        min_frames=int(quality_cfg.get("min_frames", 0)),
+        min_states=int(quality_cfg.get("min_states", 0)),
+        min_actions=int(quality_cfg.get("min_actions", 0)),
+        min_duration_sec=float(quality_cfg.get("min_duration_sec", 0.0)),
+        min_action_total_motion=float(quality_cfg.get("min_action_total_motion", 0.0)),
+        allowed_close_reasons=tuple(quality_cfg.get("allowed_close_reasons", [])),
+    )
+
     train_dataset = ArmEpisodeDataset(
         root_dir=dataset_cfg["root_dir"],
         split="train",
@@ -268,6 +341,7 @@ def build_dataloaders(config: dict[str, Any]):
         target_mode=dataset_cfg["target_mode"],
         action_time_offset_sec=float(dataset_cfg["action_time_offset_sec"]),
         max_episodes=int(dataset_cfg["max_episodes"]),
+        quality_filter=quality_filter,
     )
     val_dataset = ArmEpisodeDataset(
         root_dir=dataset_cfg["root_dir"],
@@ -278,6 +352,7 @@ def build_dataloaders(config: dict[str, Any]):
         target_mode=dataset_cfg["target_mode"],
         action_time_offset_sec=float(dataset_cfg["action_time_offset_sec"]),
         max_episodes=int(dataset_cfg["max_episodes"]),
+        quality_filter=quality_filter,
     )
 
     common_kwargs = {

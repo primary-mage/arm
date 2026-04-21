@@ -28,6 +28,7 @@ setup(
         "console_scripts": [
             "arm_imitation_train = arm_imitation_train.train:main",
             "arm_imitation_eval = arm_imitation_train.eval:main",
+            "arm_imitation_check_dataset = arm_imitation_train.check_dataset:main",
             "arm_imitation_policy = arm_imitation_train.inference:main",
         ],
     },

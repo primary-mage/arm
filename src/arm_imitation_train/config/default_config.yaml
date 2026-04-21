@@ -9,15 +9,23 @@ dataset:
   image_size: [224, 224]
   action_time_offset_sec: 0.0
   max_episodes: 0
+  quality_filter:
+    enabled: true
+    min_frames: 30
+    min_states: 100
+    min_actions: 20
+    min_duration_sec: 3.0
+    min_action_total_motion: 0.1
+    allowed_close_reasons: [success, fail]
 
 training:
-  batch_size: 16
+  batch_size: 8
   num_workers: 0
-  epochs: 20
+  epochs: 3
   learning_rate: 0.0003
   weight_decay: 0.00001
   log_interval: 10
-  output_dir: runs/arm_bc
+  output_dir: runs/arm_bc_local
 
 model:
   image_channels: 3

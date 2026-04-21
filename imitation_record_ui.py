@@ -4,6 +4,7 @@ import queue
 import signal
 import subprocess
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, scrolledtext
@@ -20,6 +21,17 @@ WORKSPACE_DIR = Path(__file__).resolve().parent
 STACK_SCRIPT = WORKSPACE_DIR / "run_imitation_record_real.sh"
 ROS_SETUP = "/opt/ros/humble/setup.bash"
 WS_SETUP = WORKSPACE_DIR / "install/setup.bash"
+RESIDUAL_PROCESS_PATTERNS = [
+    "run_imitation_record_real.sh",
+    "imitation_record_ui.py",
+    "realsense_v4l_camera_node",
+    "teach_pendant_follow_node",
+    "bus_state_publisher",
+    "inverse_dynamics_node",
+    "dm_motor_robot_driver_node",
+    "imitation_dataset_recorder_node",
+    "ros2cli.daemon",
+]
 
 
 class CameraPreviewSubscriber(Node):
@@ -103,6 +115,7 @@ class ImitationRecordUI:
         self.preview_thread: threading.Thread | None = None
         self.preview_stop_event = threading.Event()
         self.last_preview_frame = None
+        self.cleanup_lock = threading.Lock()
 
         self.task_name_var = tk.StringVar(value="unnamed_task")
         self.dataset_root_var = tk.StringVar(value="dataset")
@@ -280,6 +293,10 @@ class ImitationRecordUI:
             self._enqueue_line(line)
         process.wait()
         self._enqueue_line(f"\n[stack exited with code {process.returncode}]\n")
+        self._cleanup_residual_processes(
+            reason=f"stack exited with code {process.returncode}",
+            include_ui_process=False,
+        )
         self.root.after(0, lambda: self.status_var.set("Stack stopped"))
         self.root.after(0, self._sync_buttons)
 
@@ -301,6 +318,10 @@ class ImitationRecordUI:
         if not STACK_SCRIPT.exists():
             messagebox.showerror("Missing Script", f"Cannot find {STACK_SCRIPT}")
             return
+
+        self._cleanup_residual_processes(
+            reason="before starting stack", include_ui_process=False
+        )
 
         task_name = self.task_name_var.get().strip() or "unnamed_task"
         dataset_root = self.dataset_root_var.get().strip() or "dataset"
@@ -335,11 +356,22 @@ class ImitationRecordUI:
 
     def stop_stack(self) -> None:
         if self.stack_process is None or self.stack_process.poll() is not None:
+            self._cleanup_residual_processes(
+                reason="stop requested while stack not running", include_ui_process=False
+            )
             return
 
         self.append_log("\n[stopping stack]\n")
         self.status_var.set("Stopping stack")
-        os.killpg(os.getpgid(self.stack_process.pid), signal.SIGTERM)
+        try:
+            os.killpg(os.getpgid(self.stack_process.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+        threading.Thread(
+            target=self._cleanup_after_stop_request,
+            daemon=True,
+        ).start()
 
     def start_episode(self) -> None:
         task_name = self.task_name_var.get().strip() or "unnamed_task"
@@ -380,11 +412,99 @@ class ImitationRecordUI:
         if completed.returncode != 0:
             self._enqueue_line(f"[event publish failed with code {completed.returncode}]\n")
 
+    def _cleanup_after_stop_request(self) -> None:
+        time.sleep(1.0)
+        self._cleanup_residual_processes(
+            reason="after stop request", include_ui_process=False
+        )
+
+    def _cleanup_residual_processes(self, reason: str, include_ui_process: bool) -> None:
+        if not self.cleanup_lock.acquire(blocking=False):
+            return
+
+        try:
+            self._enqueue_line(f"[cleanup] scanning residual processes ({reason})\n")
+            current_pid = os.getpid()
+            process_list = self._list_processes()
+            residual_pids: list[int] = []
+
+            for pid, command in process_list:
+                for pattern in RESIDUAL_PROCESS_PATTERNS:
+                    if pattern not in command:
+                        continue
+                    if pid == current_pid and (pattern == "imitation_record_ui.py") and not include_ui_process:
+                        continue
+                    residual_pids.append(pid)
+                    self._enqueue_line(f"[cleanup] matched pid={pid} pattern={pattern}\n")
+                    break
+
+            residual_pids = sorted(set(residual_pids))
+            if not residual_pids:
+                self._enqueue_line("[cleanup] no residual processes found\n")
+                return
+
+            self._terminate_pids(residual_pids, signal.SIGTERM)
+            time.sleep(0.6)
+            remaining = [pid for pid in residual_pids if self._pid_exists(pid)]
+            if remaining:
+                self._enqueue_line(
+                    f"[cleanup] forcing SIGKILL for residual pids={remaining}\n"
+                )
+                self._terminate_pids(remaining, signal.SIGKILL)
+        finally:
+            self.cleanup_lock.release()
+
+    @staticmethod
+    def _list_processes() -> list[tuple[int, str]]:
+        completed = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        processes: list[tuple[int, str]] = []
+        for line in completed.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parts = stripped.split(maxsplit=1)
+            if not parts:
+                continue
+            try:
+                pid = int(parts[0])
+            except ValueError:
+                continue
+            command = parts[1] if len(parts) > 1 else ""
+            processes.append((pid, command))
+        return processes
+
+    @staticmethod
+    def _pid_exists(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    def _terminate_pids(self, pids: list[int], sig: int) -> None:
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                continue
+            except PermissionError as exc:
+                self._enqueue_line(f"[cleanup] failed to signal pid={pid}: {exc}\n")
+
     def _on_close(self) -> None:
         if self.stack_process is not None and self.stack_process.poll() is None:
             if not messagebox.askyesno("Exit", "The stack is still running. Stop it and exit?"):
                 return
             self.stop_stack()
+            time.sleep(0.8)
+        self._cleanup_residual_processes(reason="ui closing", include_ui_process=False)
         self.preview_stop_event.set()
         self.root.after(300, self.root.destroy)
 
