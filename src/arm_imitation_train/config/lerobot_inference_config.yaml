@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    model_path: "/home/primarymage/WorkFile/arm/runs/act_train_v2v3_mixed_ft_20260426_1305/checkpoints/030000/030000/pretrained_model"
+    lerobot_site_packages: "/home/primarymage/anaconda3/envs/lerobot/lib/python3.10/site-packages"
+    lerobot_library_paths: "/home/primarymage/anaconda3/envs/lerobot/lib"
+    device: "auto"
+    camera_key: "observation.images.front"
+    image_topic: /camera/color/image_raw
+    state_topic: /arm2/_lowState/joint
+    target_topic: /joint_target_state
+    publish_rate_hz: 20.0
+    state_features: [q, dq]
+    log_predictions: false

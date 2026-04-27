@@ -17,14 +17,19 @@ def generate_launch_description():
         default_value=default_config_path,
         description="Full path to the inference parameters file to use",
     )
+    policy_executable_arg = DeclareLaunchArgument(
+        "policy_executable",
+        default_value="arm_imitation_policy",
+        description="Executable name for the policy node",
+    )
 
     policy_node = Node(
         package=package_name,
-        executable="arm_imitation_policy",
+        executable=LaunchConfiguration("policy_executable"),
         name="arm_imitation_policy_node",
         output="screen",
         parameters=[LaunchConfiguration("params_path")],
         emulate_tty=True,
     )
 
-    return LaunchDescription([params_path_arg, policy_node])
+    return LaunchDescription([params_path_arg, policy_executable_arg, policy_node])

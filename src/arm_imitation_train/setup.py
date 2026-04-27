@@ -13,7 +13,11 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (
             f"share/{package_name}/config",
-            ["config/default_config.yaml", "config/inference_config.yaml"],
+            [
+                "config/default_config.yaml",
+                "config/inference_config.yaml",
+                "config/lerobot_inference_config.yaml",
+            ],
         ),
         (f"share/{package_name}/launch", ["launch/imitation_policy_launch.py"]),
         (f"share/{package_name}", ["README.md"]),
@@ -30,6 +34,8 @@ setup(
             "arm_imitation_eval = arm_imitation_train.eval:main",
             "arm_imitation_check_dataset = arm_imitation_train.check_dataset:main",
             "arm_imitation_policy = arm_imitation_train.inference:main",
+            "arm_lerobot_policy = arm_imitation_train.lerobot_inference:main",
+            "arm_imitation_convert_to_lerobot = arm_imitation_train.convert_to_lerobot:main",
         ],
     },
 )

@@ -26,6 +26,12 @@ Install these on the training machine:
 pip install torch torchvision opencv-python numpy pyyaml
 ```
 
+To convert this dataset into LeRobot format, install LeRobot separately on the machine that runs the converter:
+
+```bash
+pip install lerobot
+```
+
 ## Train
 
 ```bash
@@ -38,6 +44,34 @@ The default config is tuned for a first local CPU-only smoke test:
 - `batch_size: 8`
 - `epochs: 3`
 - output to `runs/arm_bc_local`
+
+## Convert To LeRobot
+
+The recorder output can be ported into a LeRobotDataset by decoding each episode video, aligning every frame to the nearest `states.csv` and `actions.csv` row, then writing:
+
+- `observation.images.front` from `rgb.mp4`
+- `observation.state` from the selected state fields, default `[q, dq]`
+- `action` from `actions.csv`, default `[q]`
+
+Example:
+
+```bash
+python3 -m arm_imitation_train.convert_to_lerobot \
+  --input-root /home/primarymage/WorkFile/arm/dataset \
+  --output-root /home/primarymage/WorkFile/arm/lerobot_dataset \
+  --repo-id primarymage/arm-food-task \
+  --fps 30 \
+  --allowed-close-reason success \
+  --allowed-close-reason fail
+```
+
+Useful options:
+
+- `--dry-run` prints the inferred schema without writing files.
+- `--state-features q dq ddq tau` controls how `observation.state` is built.
+- `--action-mode q|dq|q_dq` controls how the LeRobot `action` vector is built.
+- `--action-time-offset-sec <sec>` keeps the same action alignment offset used by the local loader.
+- `--overwrite` replaces an existing output directory.
 
 ## Check Dataset
 

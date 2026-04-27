@@ -11,3 +11,5 @@
     directions: [-1, -1, -1, -1, -1]
     move_speed_raw: 1200
     move_acc_raw: 20
+    angle_window_lower: [-3.14159265, -0.5, -3.0, -2.0, -3.14159265]
+    angle_window_upper: [3.14159265, 3.5, 0.15, 1.57, 3.14159265]

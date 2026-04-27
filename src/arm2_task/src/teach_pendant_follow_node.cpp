@@ -41,6 +41,14 @@ public:
         expected_joint_names_ = this->declare_parameter<std::vector<std::string>>(
             "teach_pendant.joint_names",
             std::vector<std::string>{"joint1", "joint2", "joint3", "joint4", "joint5"});
+        max_position_step_rad_ = this->declare_parameter<std::vector<double>>(
+            "teach_pendant.max_position_step_rad",
+            std::vector<double>{
+                std::numeric_limits<double>::infinity(),
+                0.12,
+                0.12,
+                std::numeric_limits<double>::infinity(),
+                std::numeric_limits<double>::infinity()});
         angle_window_lower_ = this->declare_parameter<std::vector<double>>(
             "teach_pendant.angle_window_lower",
             std::vector<double>{-M_PI, -0.5, -3.0, -2.0, -M_PI});
@@ -62,6 +70,7 @@ public:
         }
 
         normalize_joint_names();
+        normalize_position_step_limits();
         normalize_angle_windows();
 
         target_q_ = Eigen::VectorXd::Zero(kDof);
@@ -207,6 +216,36 @@ private:
         }
     }
 
+    void normalize_position_step_limits()
+    {
+        const std::array<double, kDof> default_limits = {
+            std::numeric_limits<double>::infinity(),
+            0.12,
+            0.12,
+            std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::infinity()};
+
+        if (max_position_step_rad_.size() != static_cast<size_t>(kDof)) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "teach_pendant.max_position_step_rad size=%zu, expected=%d. Falling back to defaults.",
+                max_position_step_rad_.size(),
+                kDof);
+            max_position_step_rad_.assign(default_limits.begin(), default_limits.end());
+        }
+
+        for (int i = 0; i < kDof; ++i) {
+            double & limit = max_position_step_rad_[static_cast<size_t>(i)];
+            if (std::isnan(limit) || limit < 0.0) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Teach pendant max position step for joint %d is invalid. Resetting to default.",
+                    i + 1);
+                limit = default_limits[static_cast<size_t>(i)];
+            }
+        }
+    }
+
     std::vector<int> resolve_joint_indices(const sensor_msgs::msg::JointState & msg)
     {
         if (msg.name.size() < static_cast<size_t>(kDof)) {
@@ -336,10 +375,14 @@ private:
         const auto indices = resolve_joint_indices(*msg);
 
         Eigen::VectorXd previous_continuous_q = Eigen::VectorXd::Zero(kDof);
+        Eigen::VectorXd previous_target_q = Eigen::VectorXd::Zero(kDof);
+        rclcpp::Time previous_target_stamp{0, 0, RCL_ROS_TIME};
         bool has_previous_target = false;
         {
             std::lock_guard<std::mutex> lock(data_mutex_);
             previous_continuous_q = last_continuous_q_;
+            previous_target_q = target_q_;
+            previous_target_stamp = last_target_stamp_;
             has_previous_target = has_target_;
         }
 
@@ -391,7 +434,48 @@ private:
             stamp = this->get_clock()->now();
         }
 
+        double dt = 0.0;
+        if (has_previous_target && stamp > previous_target_stamp) {
+            dt = (stamp - previous_target_stamp).seconds();
+        }
+
         Eigen::VectorXd ddq = Eigen::VectorXd::Zero(kDof);
+        if (has_previous_target && dt > std::numeric_limits<double>::epsilon()) {
+            for (int i = 0; i < kDof; ++i) {
+                const double max_step = max_position_step_rad_[static_cast<size_t>(i)];
+                if (!std::isfinite(max_step)) {
+                    continue;
+                }
+
+                const double q_delta = q[i] - previous_target_q[i];
+                if (std::abs(q_delta) <= max_step) {
+                    continue;
+                }
+
+                const double limited_q =
+                    previous_target_q[i] + std::copysign(max_step, q_delta);
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(),
+                    *this->get_clock(),
+                    500,
+                    "Teach pendant joint %d position jump limited: raw=%.4f rad prev=%.4f rad delta=%.4f rad limit=%.4f rad -> %.4f rad.",
+                    i + 1,
+                    q[i],
+                    previous_target_q[i],
+                    q_delta,
+                    max_step,
+                    limited_q);
+                q[i] = limited_q;
+                continuous_q[i] = limited_q;
+                const double limited_delta = q[i] - previous_target_q[i];
+                dq[i] = limited_delta / dt;
+                dq[i] = std::clamp(
+                    dq[i],
+                    -max_step / dt,
+                    max_step / dt);
+            }
+        }
+
         {
             std::lock_guard<std::mutex> lock(data_mutex_);
             if (has_target_ && stamp > last_target_stamp_) {
@@ -529,6 +613,7 @@ private:
     std::string mode_service_name_;
     std::string mode_name_;
     std::vector<std::string> expected_joint_names_;
+    std::vector<double> max_position_step_rad_;
     std::vector<double> angle_window_lower_;
     std::vector<double> angle_window_upper_;
     Eigen::VectorXd target_q_;

@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    checkpoint_path: ""
+    checkpoint_path: "/home/primarymage/WorkFile/arm/runs/arm_bc_full/best.pt"
     image_topic: /camera/color/image_raw
     state_topic: /arm2/_lowState/joint
     target_topic: /joint_target_state

@@ -190,7 +190,8 @@ class ArmImitationPolicyNode(Node):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
-    return parser.parse_args()
+    args, _ = parser.parse_known_args()
+    return args
 
 
 def main() -> None:
