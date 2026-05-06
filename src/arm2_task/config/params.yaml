@@ -5,8 +5,8 @@
     camera_extrinsics:
       child_frame: camera_link
       parent_frame: Link_4
-      pos: [0.0, -0.07, 0.0]
-      quat: [0.0, 0.70710678, 0.0, 0.70710678]
+      pos: [-0.071470, -0.103035, 0.027404]
+      quat: [0.02799937, 0.69705640, -0.00605161, 0.71644385]
     # 动力学与摩擦力补偿参数
     # tau_f = fc * tanh(alpha * dq) + fv * dq
     dynamics:
@@ -21,8 +21,8 @@
     gains:
       #2. 纯重力补偿模式 (GRAVITY_COMP): 极低 PD,主要靠动力学模型抵消重力,实现“透明”手感或零力示教
       gravity_comp:
-        kd: [1.0, 2.5, 1.5, 0.2, 0.02]
-        kp: [2.0, 6.5, 4.0, 1.2, 0.1]
+        kd: [1.0, 2.5, 2.0, 0.2, 0.02]
+        kp: [2.0, 10.5, 8.0, 1.2, 0.1]
       # 1. 待机模式 (IDLE): 低增益，防止电机高频振动发热，允许手动推过
       idle:
         kd: [0.5, 0.5, 0.5, 0.2, 0.1]
@@ -80,6 +80,7 @@
       max_acceleration: 1.2
       max_velocity: 0.8
     task:
+      recognition_debug_mode: false
       require_payload_service: false
       require_suction_service: false
     teach_pendant:
@@ -149,6 +150,23 @@
       loop: false
       playback_speed: 1.0
       log_progress: false
+    handeye_charuco_capture:
+      output_dir: recordings/handeye_charuco_capture
+      state_topic: /arm2/_lowState/joint
+      ready_topic: /robot_driver/ready
+      require_ready: false
+      camera_source: "0"
+      capture_width: 1280
+      capture_height: 720
+      preview_rate_hz: 8.0
+      overwrite_output: true
+      board_squares_x: 7
+      board_squares_y: 5
+      square_length_m: 0.03
+      marker_length_m: 0.022
+      dictionary_name: DICT_4X4_50
+      min_charuco_corners: 8
+      intrinsics_file: ""
     inverse_dynamics:
       state_topic: /arm2/_lowState/joint
       target_topic: /joint_target_state

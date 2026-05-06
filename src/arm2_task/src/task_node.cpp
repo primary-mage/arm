@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cmath>
+#include <iomanip>
 #include <memory>
 #include <string>
 #include <Eigen/Dense>
@@ -14,6 +15,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "robot_msgs/srv/get_pick_pos.hpp"
 #include "robot_msgs/srv/set_suction.hpp"
 #include "robot_msgs/srv/set_controller_mode.hpp"
@@ -66,6 +69,8 @@ public:
             this->declare_parameter("task.require_payload_service", false);
         require_suction_service_ =
             this->declare_parameter("task.require_suction_service", false);
+        recognition_debug_mode_ =
+            this->declare_parameter("task.recognition_debug_mode", false);
 
         // 2. 初始化逆解引擎
         kin_engine_ = std::make_unique<arm2_task::KinematicsEngine>(
@@ -128,7 +133,10 @@ public:
         payload_client_ = this->create_client<robot_msgs::srv::GetPayloadEstimate>("get_payload_estimate");
         move_joint_client_ = rclcpp_action::create_client<MoveJoint>(this, "move_joint");
 
-        RCLCPP_INFO(this->get_logger(), "Task Node Started.");
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Task Node Started. recognition_debug_mode=%s",
+            recognition_debug_mode_ ? "true" : "false");
     }
 
     ~TaskNode()
@@ -280,6 +288,19 @@ private:
             rclcpp::sleep_for(100ms);
         }
 
+        if (recognition_debug_mode_)
+        {
+            RCLCPP_INFO(this->get_logger(), "Waiting for GetPickPos service (recognition debug mode)...");
+            while (rclcpp::ok() && is_running_.load())
+            {
+                if (pick_client_->wait_for_service(500ms))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         RCLCPP_INFO(this->get_logger(), "Waiting for control services and action server...");
         while (rclcpp::ok() && is_running_.load())
         {
@@ -340,6 +361,10 @@ private:
             this->declare_parameter("camera_extrinsics.child_frame", std::string("camera_link"));
         auto pos =
             this->declare_parameter("camera_extrinsics.pos", std::vector<double>{0.0, -0.07, 0.0});
+        auto quat =
+            this->declare_parameter(
+                "camera_extrinsics.quat",
+                std::vector<double>{0.0, 0.70710678, 0.0, 0.70710678});
         if (pos.size() != 3U)
         {
             RCLCPP_ERROR(
@@ -348,16 +373,31 @@ private:
                 pos.size());
             pos = {0.0, -0.07, 0.0};
         }
+        if (quat.size() != 4U)
+        {
+            RCLCPP_ERROR(
+                this->get_logger(),
+                "camera_extrinsics.quat size=%zu, expected 4. Falling back to [0.0, 0.70710678, 0.0, 0.70710678].",
+                quat.size());
+            quat = {0.0, 0.70710678, 0.0, 0.70710678};
+        }
 
         camera_pos_link4_ = Eigen::Vector3d(pos[0], pos[1], pos[2]);
+        Eigen::Quaterniond camera_quat(quat[3], quat[0], quat[1], quat[2]);
+        camera_quat.normalize();
+        camera_rot_link4_ = camera_quat.toRotationMatrix();
         RCLCPP_INFO(
             this->get_logger(),
-            "Loaded camera extrinsics %s -> %s, pos=[%.3f, %.3f, %.3f]",
+            "Loaded camera extrinsics %s -> %s, pos=[%.3f, %.3f, %.3f] quat=[%.3f, %.3f, %.3f, %.3f]",
             parent_frame.c_str(),
             child_frame.c_str(),
             camera_pos_link4_.x(),
             camera_pos_link4_.y(),
-            camera_pos_link4_.z());
+            camera_pos_link4_.z(),
+            quat[0],
+            quat[1],
+            quat[2],
+            quat[3]);
     }
     // 发送关节空间目标
     bool wait_for_action_completion(std::chrono::seconds timeout = std::chrono::seconds(30))
@@ -504,6 +544,59 @@ private:
         std::vector<Eigen::VectorXd> waypoints{q_single};
         return send_move_goal(waypoints);
     }
+
+    static std::string format_pose(const geometry_msgs::msg::Pose &pose)
+    {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(6);
+        oss << "pos=[" << pose.position.x << ", " << pose.position.y << ", " << pose.position.z
+            << "] quat=[" << pose.orientation.x << ", " << pose.orientation.y << ", "
+            << pose.orientation.z << ", " << pose.orientation.w << "]";
+        return oss.str();
+    }
+
+    static geometry_msgs::msg::Pose pose_from_transform(
+        const geometry_msgs::msg::TransformStamped &transform)
+    {
+        geometry_msgs::msg::Pose pose;
+        pose.position.x = transform.transform.translation.x;
+        pose.position.y = transform.transform.translation.y;
+        pose.position.z = transform.transform.translation.z;
+        pose.orientation = transform.transform.rotation;
+        return pose;
+    }
+
+    static geometry_msgs::msg::Pose pose_from_rotation_translation(
+        const Eigen::Matrix3d &rotation,
+        const Eigen::Vector3d &translation)
+    {
+        geometry_msgs::msg::Pose pose;
+        pose.position.x = translation.x();
+        pose.position.y = translation.y();
+        pose.position.z = translation.z();
+        const Eigen::Quaterniond quat(rotation);
+        pose.orientation.x = quat.x();
+        pose.orientation.y = quat.y();
+        pose.orientation.z = quat.z();
+        pose.orientation.w = quat.w();
+        return pose;
+    }
+
+    bool current_joint_snapshot(Eigen::VectorXd *q_out)
+    {
+        if (q_out == nullptr)
+        {
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!has_robot_data_.load() || q_current_.size() != 5)
+        {
+            return false;
+        }
+        *q_out = q_current_;
+        return true;
+    }
+
     /**
      * @brief 坐标获取服务请求：使用 TF2 处理感知延迟并转换至世界坐标系
      */
@@ -566,6 +659,113 @@ private:
         catch (tf2::TransformException &ex)
         {
             RCLCPP_ERROR(this->get_logger(), "TF2 Error: %s", ex.what());
+            return false;
+        }
+    }
+
+    static void print_recognition_debug_menu()
+    {
+        std::cout << "\n========== 识别调试面板 (配合重力补偿) ==========" << std::endl;
+        std::cout << "6: 获取一次识别结果并打印位姿" << std::endl;
+        std::cout << "0: 退出程序" << std::endl;
+        std::cout << "请输入指令数字: " << std::flush;
+    }
+
+    static void print_joint_control_menu()
+    {
+        std::cout << "\n========== 任务控制面板 (关节空间/IK) ==========" << std::endl;
+        std::cout << "1: 执行 Step 1 (重置到预设 IDLE)" << std::endl;
+        std::cout << "2: 执行 Step 2 (识别并动态移动到 LOOKAT)" << std::endl;
+        std::cout << "3: 执行 Step 3 (执行 IK 抓取 GRASP)" << std::endl;
+        std::cout << "4: 执行 Step 4 (负载估计与模式切换)" << std::endl;
+        std::cout << "5: 执行 Step 5 (移动到预设 LOAD 点)" << std::endl;
+        std::cout << "6: 执行 Step 6 (纯识别并打印位姿)" << std::endl;
+        std::cout << "7: 执行 Step 7 (获取当前识别目标位姿)" << std::endl;
+        std::cout << "8: 执行 Step 8 (动态 LOOKAT 后直接抓取)" << std::endl;
+        std::cout << "9: 执行 Step 9 (感知目标并执行 IK 抓取)" << std::endl;
+        std::cout << "0: 退出程序" << std::endl;
+        std::cout << "请输入指令数字: " << std::flush;
+    }
+
+    bool debug_pick_pose_once(const std::string &object_name)
+    {
+        if (!pick_client_->wait_for_service(std::chrono::seconds(1)))
+        {
+            RCLCPP_ERROR(this->get_logger(), "GetPickPos service is not available.");
+            return false;
+        }
+
+        auto request = std::make_shared<robot_msgs::srv::GetPickPos::Request>();
+        request->object_name = object_name;
+
+        auto result_future = pick_client_->async_send_request(request);
+        if (result_future.wait_for(std::chrono::seconds(3)) != std::future_status::ready)
+        {
+            RCLCPP_ERROR(this->get_logger(), "GetPickPos service call timed out.");
+            return false;
+        }
+
+        const auto response = result_future.get();
+        if (!response || response->pick_pose.header.frame_id.empty())
+        {
+            RCLCPP_ERROR(this->get_logger(), "GetPickPos returned an empty pose.");
+            return false;
+        }
+
+        try
+        {
+            const auto &target_camera_stamped = response->pick_pose;
+            const std::string camera_frame = target_camera_stamped.header.frame_id;
+            Eigen::VectorXd q_snapshot(5);
+            if (!current_joint_snapshot(&q_snapshot))
+            {
+                RCLCPP_ERROR(this->get_logger(), "No valid robot joint snapshot available.");
+                return false;
+            }
+
+            const pinocchio::SE3 world_T_link4 = kin_engine_->forwardKinematics(q_snapshot);
+            const Eigen::Matrix3d world_R_link4 = world_T_link4.rotation();
+            const Eigen::Vector3d world_t_link4 = world_T_link4.translation();
+            const geometry_msgs::msg::Pose link4_world_pose =
+                pose_from_rotation_translation(world_R_link4, world_t_link4);
+
+            const Eigen::Quaterniond camera_target_quat(
+                target_camera_stamped.pose.orientation.w,
+                target_camera_stamped.pose.orientation.x,
+                target_camera_stamped.pose.orientation.y,
+                target_camera_stamped.pose.orientation.z);
+            const Eigen::Matrix3d camera_R_target = camera_target_quat.normalized().toRotationMatrix();
+            const Eigen::Vector3d camera_t_target(
+                target_camera_stamped.pose.position.x,
+                target_camera_stamped.pose.position.y,
+                target_camera_stamped.pose.position.z);
+
+            const Eigen::Matrix3d world_R_camera = world_R_link4 * camera_rot_link4_;
+            const Eigen::Vector3d world_t_camera = world_t_link4 + world_R_link4 * camera_pos_link4_;
+            const Eigen::Matrix3d world_R_target = world_R_camera * camera_R_target;
+            const Eigen::Vector3d world_t_target = world_t_camera + world_R_camera * camera_t_target;
+            const geometry_msgs::msg::Pose target_world_pose =
+                pose_from_rotation_translation(world_R_target, world_t_target);
+
+            RCLCPP_INFO(this->get_logger(), "Recognition debug snapshot:");
+            RCLCPP_INFO(
+                this->get_logger(),
+                "  Link_4 relative to base/world: %s",
+                format_pose(link4_world_pose).c_str());
+            RCLCPP_INFO(
+                this->get_logger(),
+                "  Target relative to camera (%s): %s",
+                camera_frame.c_str(),
+                format_pose(target_camera_stamped.pose).c_str());
+            RCLCPP_INFO(
+                this->get_logger(),
+                "  Target relative to base/world: %s",
+                format_pose(target_world_pose).c_str());
+            return true;
+        }
+        catch (const std::exception &ex)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Debug recognition pose computation failed: %s", ex.what());
             return false;
         }
     }
@@ -755,22 +955,21 @@ private:
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "Task Node [Joint Control Mode] Ready.");
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Task Node [%s] Ready.",
+            recognition_debug_mode_ ? "Recognition Debug Mode" : "Joint Control Mode");
 
         while (rclcpp::ok() && is_running_.load())
         {
-            std::cout << "\n========== 任务控制面板 (关节空间/IK) ==========" << std::endl;
-            std::cout << "1: 执行 Step 1 (重置到预设 IDLE)" << std::endl;
-            std::cout << "2: 执行 Step 2 (识别并动态移动到 LOOKAT)" << std::endl;
-            std::cout << "3: 执行 Step 3 (执行 IK 抓取 GRASP)" << std::endl;
-            std::cout << "4: 执行 Step 4 (负载估计与模式切换)" << std::endl;
-            std::cout << "5: 执行 Step 5 (移动到预设 LOAD 点)" << std::endl;
-            std::cout << "6: 执行 Step 6 (感知目标并执行 IK 抓取)" << std::endl;
-            std::cout << "7: 执行 Step 7 (获取当前识别目标位姿)" << std::endl;
-            std::cout << "8: 执行 Step 8 (动态 LOOKAT 后直接抓取)" << std::endl;
-            std::cout << "9: 执行 Step 9 (感知目标并执行 IK 抓取)" << std::endl;
-            std::cout << "0: 退出程序" << std::endl;
-            std::cout << "请输入指令数字: " << std::flush;
+            if (recognition_debug_mode_)
+            {
+                print_recognition_debug_menu();
+            }
+            else
+            {
+                print_joint_control_menu();
+            }
 
             int input_cmd;
             if (!wait_for_user_command(&input_cmd))
@@ -783,6 +982,11 @@ private:
             switch (input_cmd)
             {
             case 1:
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 1 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 1: Resetting to IDLE...");
                 if (!set_suction(false))
                 {
@@ -812,6 +1016,11 @@ private:
                 break;
 
             case 2:
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 2 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 2: Dynamic Looking...");
                 if (!request_mode_switch("moving"))
                 {
@@ -840,6 +1049,11 @@ private:
                 break;
 
             case 3:
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 3 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 3: IK Grasping...");
                 if (!request_mode_switch("moving"))
                 {
@@ -868,6 +1082,11 @@ private:
                 break;
 
             case 4:
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 4 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 4: IK Grasping...");
                 if (!request_mode_switch("moving"))
                 {
@@ -896,6 +1115,11 @@ private:
                 break;
 
             case 5:
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 5 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 5: IK Grasping...");
                 if (!request_mode_switch("moving"))
                 {
@@ -924,38 +1148,23 @@ private:
                 break;
 
             case 6:
-            { // <--- 在这里添加左大括号
-                RCLCPP_INFO(this->get_logger(), ">>> Step 6: IK Grasping...");
-                if (!request_mode_switch("moving"))
+            {
+                RCLCPP_INFO(this->get_logger(), ">>> Step 6: Recognition-only debug print...");
+                if (!debug_pick_pose_once("box"))
                 {
-                    RCLCPP_ERROR(this->get_logger(), "Step 6 aborted because controller failed to enter moving mode.");
-                    break;
-                }
-                
-                geometry_msgs::msg::Pose target_pose;
-                bool action_started = false;
-                if (call_pick_service_sync("box", &target_pose)) 
-                {
-                    action_started = grasp_action(target_pose);
-                }
-                else
-                {
-                    RCLCPP_ERROR(this->get_logger(), "Step 6 aborted because no valid target pose was received.");
-                }
-
-                if (action_started)
-                {
-                    if (!wait_for_action_completion())
-                    {
-                        RCLCPP_ERROR(this->get_logger(), "Step 6 motion did not finish successfully.");
-                    }
+                    RCLCPP_ERROR(this->get_logger(), "Step 6 failed to retrieve or transform poses.");
                 }
                 RCLCPP_INFO(this->get_logger(), "Step 6 完成。");
                 break;
-            } // <--- 在这里添加右大括号
+            }
 
             case 7:
             {
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 7 is disabled in recognition_debug_mode; use Step 6.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 7: Query Current Pick Pose...");
                 if (!request_mode_switch("moving"))
                 {
@@ -984,6 +1193,11 @@ private:
 
             case 8:
             {
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 8 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 8: Dynamic Look At + Grasp...");
                 if (!request_mode_switch("moving"))
                 {
@@ -1035,6 +1249,11 @@ private:
 
             case 9:
             {
+                if (recognition_debug_mode_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "Step 9 is disabled in recognition_debug_mode.");
+                    break;
+                }
                 RCLCPP_INFO(this->get_logger(), ">>> Step 9: IK Grasping...");
                 if (!request_mode_switch("moving"))
                 {
@@ -1106,9 +1325,11 @@ private:
     bool last_action_succeeded_{false};
     std::string last_action_message_;
     std::mutex action_result_mutex_;
+    bool recognition_debug_mode_{false};
 
     std::map<std::string, Eigen::VectorXd> presets_; // 预设位姿
     Eigen::Vector3d camera_pos_link4_{0.0, -0.07, 0.0};
+    Eigen::Matrix3d camera_rot_link4_{Eigen::Matrix3d::Identity()};
     std::unique_ptr<arm2_task::KinematicsEngine> kin_engine_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

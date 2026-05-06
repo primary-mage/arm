@@ -14,6 +14,7 @@ find_package(pinocchio REQUIRED)
 find_package(robot_msgs REQUIRED) 
 find_package(std_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS aruco calib3d core highgui imgcodecs imgproc videoio)
 
 # 2. 包含头文件
 include_directories(include)
@@ -136,6 +137,16 @@ ament_target_dependencies(follow_target_node
   ament_index_cpp
 )
 
+add_executable(handeye_charuco_capture_node src/handeye_charuco_capture_node.cpp)
+target_link_libraries(handeye_charuco_capture_node arm2_algorithms ${OpenCV_LIBS})
+ament_target_dependencies(handeye_charuco_capture_node
+  rclcpp
+  pinocchio
+  robot_msgs
+  std_msgs
+  ament_index_cpp
+)
+
 # 5. 分类安装 (核心修复)
 # 将库安装到标准的 lib/ 目录下
 install(TARGETS arm2_algorithms
@@ -157,6 +168,7 @@ install(TARGETS
   teach_drag_record_node
   teach_drag_playback_node
   follow_target_node
+  handeye_charuco_capture_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

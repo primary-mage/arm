@@ -1,0 +1,27 @@
+%YAML:1.0
+---
+metadata:
+   schema: "arm2_task.handeye_charuco_capture.v1"
+   reason: final
+   camera_source: /dev/video2
+   intrinsics_file: "/home/primarymage/WorkFile/arm-main/recordings/handeye_charuco_capture/device_intrinsics.yml"
+   camera_matrix: !!opencv-matrix
+      rows: 3
+      cols: 3
+      dt: d
+      data: [ 9.0801013183593750e+02, 0., 6.4692572021484375e+02, 0.,
+          9.0727520751953125e+02, 3.7344546508789062e+02, 0., 0., 1. ]
+   dist_coeffs: !!opencv-matrix
+      rows: 5
+      cols: 1
+      dt: d
+      data: [ 0., 0., 0., 0., 0. ]
+   board_squares_x: 7
+   board_squares_y: 5
+   square_length_m: 2.9999999999999999e-02
+   marker_length_m: 2.1999999999999999e-02
+   dictionary_name: DICT_4X4_50
+   min_charuco_corners: 8
+   sample_count: 0
+samples:
+   []
